@@ -106,7 +106,7 @@ class FusionChatTUI(App[None]):
     async def _append_synthesis(self, result: FusionResult) -> None:
         chat = self.query_one("#chat-log", RichLog)
         panel_info = ", ".join(
-            f"{model} ({len(response)} chars)" for model, response in result.responses
+            f"{p.model} ({len(p.content)} chars)" for p in result.responses
         )
         fallback = "  ·  [#ef4444]panel unavailable — direct answer[/#ef4444]" if result.used_fallback else ""
         chat.write("")

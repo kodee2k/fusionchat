@@ -50,18 +50,20 @@ class SessionLogger:
     def log_turn(self, turn: int, user_message: str, result: FusionResult) -> None:
         if self.log_prompts:
             panel = [
-                {"model": model, "response": response}
-                for model, response in result.responses
+                {"model": p.model, "response": p.content, "reasoning": p.reasoning, "ok": p.ok}
+                for p in result.responses
             ]
             user = user_message
             synthesis = result.synthesis
+            master_reasoning = result.master_reasoning
         else:
             panel = [
-                {"model": model, "response_chars": len(response)}
-                for model, response in result.responses
+                {"model": p.model, "response_chars": len(p.content), "ok": p.ok}
+                for p in result.responses
             ]
             user = _REDACTED
             synthesis = _REDACTED
+            master_reasoning = None
         self._write({
             "event": "turn",
             "session_id": self.session_id,
@@ -75,6 +77,7 @@ class SessionLogger:
             "panel": panel,
             "synthesis": synthesis,
             "synthesis_chars": len(result.synthesis),
+            "master_reasoning": master_reasoning,
         })
 
     def log_error(self, turn: int, error: str) -> None:

@@ -37,7 +37,8 @@ def test_run_synthesizes_when_panel_succeeds(tmp_path):
     assert result.synthesis == "FINAL"
     assert result.used_fallback is False
     assert result.master_context_used == 128_000
-    assert [r for _, r in result.responses] == ["resp-f1", "resp-f2"]
+    assert [p.content for p in result.responses] == ["resp-f1", "resp-f2"]
+    assert all(p.ok for p in result.responses)
     # master received a synthesis prompt
     assert "synthesis judge" in master.calls[0]["messages"][0].content
     # per-fusion budget = ctx * 0.5 / 2 fusion models = 32000
@@ -88,8 +89,9 @@ def test_master_fallback_when_all_fusion_fail(tmp_path):
     assert result.synthesis == "DIRECT"
     # master got a direct prompt, not a synthesis prompt
     assert "fusion panel was unavailable" in master.calls[0]["messages"][0].content
-    # error strings are still recorded in the panel
-    assert all(r.startswith("[Error from") for _, r in result.responses)
+    # error strings are still recorded in the panel, marked not-ok
+    assert all(p.content.startswith("[Error from") for p in result.responses)
+    assert not any(p.ok for p in result.responses)
 
 
 def test_partial_failure_still_synthesizes(tmp_path):
@@ -128,6 +130,16 @@ def test_master_budget_cannot_overflow(tmp_path):
         combined_panel = sum(fc.calls[0]["max_tokens"] for fc in fclients)
         synth_out = mclient.calls[0]["max_tokens"]
         assert combined_panel + synth_out <= ctx
+
+
+def test_reasoning_is_captured(tmp_path):
+    config = make_config(tmp_path, fusion=[model_cfg(model="f1")])
+    master = FakeClient(config.master, reply="FINAL", ctx=128_000, reasoning="master thinks")
+    fusion = [FakeClient(config.fusion[0], reply="f-out", reasoning="fusion thinks")]
+    orch = build_orchestrator(config, master, fusion)
+    result = asyncio.run(orch.run(msgs()))
+    assert result.master_reasoning == "master thinks"
+    assert result.responses[0].reasoning == "fusion thinks"
 
 
 def test_prompt_builders_contain_history():

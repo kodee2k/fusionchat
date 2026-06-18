@@ -81,12 +81,21 @@ def direct_prompt(task_messages: list[ChatMessage]) -> str:
 
 
 @dataclass
+class PanelResponse:
+    model: str
+    content: str
+    reasoning: str | None = None
+    ok: bool = True
+
+
+@dataclass
 class FusionResult:
-    responses: list[tuple[str, str]]
+    responses: list[PanelResponse]
     synthesis: str
     master_context_used: int
     per_fusion_max_tokens: int
     used_fallback: bool = False
+    master_reasoning: str | None = None
 
 
 class FusionOrchestrator:
@@ -109,14 +118,14 @@ class FusionOrchestrator:
 
     async def _run_fusion_model(
         self, client: ModelClient, prompt: str, budget: int
-    ) -> tuple[str, str, bool]:
+    ) -> PanelResponse:
         messages = [ChatMessage(role="user", content=prompt)]
         max_tokens = max(1, min(budget, _output_cap(client.cfg)))
         try:
-            response = await client.chat(messages, max_tokens=max_tokens, temperature=client.cfg.temperature)
-            return client.cfg.model, response, True
+            resp = await client.chat_full(messages, max_tokens=max_tokens, temperature=client.cfg.temperature)
+            return PanelResponse(model=client.cfg.model, content=resp.content, reasoning=resp.reasoning, ok=True)
         except APIError as exc:
-            return client.cfg.model, f"[Error from {client.cfg.model}: {exc}]", False
+            return PanelResponse(model=client.cfg.model, content=f"[Error from {client.cfg.model}: {exc}]", ok=False)
 
     async def run(self, messages: list[ChatMessage]) -> FusionResult:
         master_ctx, per_fusion_budget = await self._fusion_budget()
@@ -129,15 +138,14 @@ class FusionOrchestrator:
         ]
         raw = await asyncio.gather(*tasks, return_exceptions=True)
 
-        panel: list[tuple[str, str]] = []
+        panel: list[PanelResponse] = []
         any_ok = False
         for item in raw:
             if isinstance(item, BaseException):
-                panel.append(("unknown", f"[Unhandled error: {item}]"))
+                panel.append(PanelResponse(model="unknown", content=f"[Unhandled error: {item}]", ok=False))
             else:
-                model_id, response, ok = item
-                panel.append((model_id, response))
-                any_ok = any_ok or ok
+                panel.append(item)
+                any_ok = any_ok or item.ok
 
         ratio = _EFFORT_RATIOS[self.config.effort]
         # The panel consumed up to master_ctx * ratio of the window; reserve what it
@@ -148,14 +156,14 @@ class FusionOrchestrator:
         synth_max = max(1, min(synth_budget, _output_cap(self.config.master)))
 
         if any_ok:
-            prompt_text = synthesis_prompt(messages, panel)
+            prompt_text = synthesis_prompt(messages, [(p.model, p.content) for p in panel])
             used_fallback = False
         else:
             # Every fusion model failed — answer directly rather than synthesizing errors.
             prompt_text = direct_prompt(messages)
             used_fallback = True
 
-        synthesis = await self.master_client.chat(
+        synthesis = await self.master_client.chat_full(
             [ChatMessage(role="user", content=prompt_text)],
             max_tokens=synth_max,
             temperature=self.config.master.temperature,
@@ -163,10 +171,11 @@ class FusionOrchestrator:
 
         return FusionResult(
             responses=panel,
-            synthesis=synthesis,
+            synthesis=synthesis.content,
             master_context_used=master_ctx,
             per_fusion_max_tokens=per_fusion_budget,
             used_fallback=used_fallback,
+            master_reasoning=synthesis.reasoning,
         )
 
     async def close(self) -> None:

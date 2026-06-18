@@ -7,7 +7,7 @@ import fusionchat.web as web
 
 
 @pytest.fixture(autouse=True)
-def _clear_web_sessions():
-    web.SESSIONS.clear()
+def _clear_web_conversations():
+    web.CONVERSATIONS.clear()
     yield
-    web.SESSIONS.clear()
+    web.CONVERSATIONS.clear()

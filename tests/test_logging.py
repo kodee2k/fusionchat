@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from _helpers import make_config
-from fusionchat.fusion import FusionResult
+from fusionchat.fusion import FusionResult, PanelResponse
 from fusionchat.logging import SessionLogger
 
 
@@ -14,7 +14,10 @@ def read_records(path):
 
 def sample_result():
     return FusionResult(
-        responses=[("gpt-4o-mini", "panel one"), ("claude", "panel two")],
+        responses=[
+            PanelResponse(model="gpt-4o-mini", content="panel one"),
+            PanelResponse(model="claude", content="panel two"),
+        ],
         synthesis="the final synthesized answer",
         master_context_used=128_000,
         per_fusion_max_tokens=8000,

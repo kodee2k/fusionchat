@@ -23,6 +23,12 @@ class ChatMessage:
     content: str
 
 
+@dataclass(frozen=True)
+class ChatResponse:
+    content: str
+    reasoning: str | None = None
+
+
 class APIError(Exception):
     pass
 
@@ -56,6 +62,20 @@ class ModelClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> str:
+        return (await self.chat_full(messages, max_tokens, temperature)).content
+
+    async def chat_full(
+        self,
+        messages: list[ChatMessage],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> ChatResponse:
+        """Like ``chat`` but also returns any reasoning the provider exposes.
+
+        OpenAI-compatible providers surface chain-of-thought (when they expose it
+        at all) as ``message.reasoning_content`` or ``message.reasoning``; absent
+        either, ``reasoning`` is ``None``.
+        """
         payload = self._payload(messages, max_tokens, temperature)
         url = f"{self.cfg.base_url}/v1/chat/completions"
 
@@ -80,9 +100,16 @@ class ModelClient:
 
             data = resp.json()
             try:
-                return str(data["choices"][0]["message"]["content"])
+                message = data["choices"][0]["message"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise APIError(f"Unexpected response shape from {self.cfg.model}: {data}") from exc
+            if not isinstance(message, dict):
+                raise APIError(f"Unexpected response shape from {self.cfg.model}: {data}")
+            content = message.get("content") or ""
+            reasoning = message.get("reasoning_content") or message.get("reasoning")
+            if not isinstance(reasoning, str) or not reasoning.strip():
+                reasoning = None
+            return ChatResponse(content=str(content), reasoning=reasoning)
 
         # Loop always returns or raises; this satisfies type checkers.
         raise last_error or APIError(f"Request to {self.cfg.model} failed.")

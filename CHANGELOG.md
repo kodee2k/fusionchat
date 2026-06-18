@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-18
+
+### Added
+- Web UI conversation overview: a sidebar to create, switch between, and delete multiple
+  chats, each auto-titled from its first message.
+- Conversations persist to disk (`<data>/conversations/*.json`) and are restored on restart.
+- Collapsible per-fusion-model output bubbles in the web UI, with nested reasoning and a
+  master-reasoning bubble when a provider returns reasoning (`reasoning_content` / `reasoning`).
+- Ordered-list (`1.`) rendering in the web markdown.
+
+### Changed
+- Web UI rewritten around an app-global conversation store that shares one stateless
+  orchestrator (lighter; removes per-page-load client churn).
+- Tightened web markdown spacing (blank lines no longer emit literal `<br>`) and centered
+  the conversation column for readability.
+
 ## [0.1.0] - 2026-06-16
 
 First public release.

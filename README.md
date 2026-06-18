@@ -80,7 +80,12 @@ fusionchat --no-log-prompts       # log metadata only, not prompt/response text
 ```
 
 In the TUI, press **Ctrl+N** for a new chat, **F1** for config info, **Ctrl+C** to quit.
-The web UI has a **New chat** button and serves a `/health` endpoint for monitoring.
+
+The web UI has a **conversation sidebar** — create, switch between, and delete multiple
+chats, each auto-titled from its first message and **persisted to disk** so they survive
+restarts. Every answer shows a collapsible **Fusion panel** (each model's output
+expandable, with reasoning when the provider returns it) above the synthesized answer.
+A `/health` endpoint reports status without consuming tokens.
 
 ## Token budget
 
@@ -127,6 +132,11 @@ Every session gets a JSONL file under `~/.local/share/fusionchat/sessions/` (or
 turn, all fusion responses, the final synthesis, and any errors. Use `--no-log-prompts`
 (or `log_prompts: false`) to keep prompt/response text out of the logs while retaining
 character counts and timing metadata.
+
+Web conversations are additionally saved as JSON under
+`~/.local/share/fusionchat/conversations/` (the parent of `log_dir`) so the chat list is
+restored on restart. Conversations are app-global — when the web UI is exposed beyond
+localhost, set `web_password`.
 
 ## Development
 

@@ -35,6 +35,26 @@ def test_chat_sends_max_tokens_and_temperature():
     assert seen["model"] == "m"
 
 
+def test_chat_full_extracts_reasoning():
+    def handler(req):
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ans", "reasoning_content": "because"}}]})
+
+    async def go():
+        async with mock_client(model_cfg(), handler) as mc:
+            r = await mc.chat_full([ChatMessage("user", "hi")])
+            assert r.content == "ans"
+            assert r.reasoning == "because"
+    asyncio.run(go())
+
+
+def test_chat_full_no_reasoning_is_none():
+    async def go():
+        async with mock_client(model_cfg(), lambda req: chat_response("ans")) as mc:
+            r = await mc.chat_full([ChatMessage("user", "hi")])
+            assert r.reasoning is None
+    asyncio.run(go())
+
+
 def test_chat_error_status_raises():
     async def go():
         async with mock_client(model_cfg(retries=0), lambda req: httpx.Response(400, text="bad")) as mc:

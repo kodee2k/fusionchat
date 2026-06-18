@@ -1,22 +1,24 @@
-"""Tests for the FastAPI web interface and markdown renderer."""
+"""Tests for the FastAPI web interface, conversation overview, and markdown renderer."""
 from __future__ import annotations
-
-import asyncio
 
 from fastapi.testclient import TestClient
 
 import fusionchat.web as web
 from _helpers import make_config
-from fusionchat.fusion import FusionResult
+from fusionchat.fusion import FusionResult, PanelResponse
 
 
 async def run_ok(messages):
     return FusionResult(
-        responses=[("m1", "r1"), ("m2", "r2")],
+        responses=[
+            PanelResponse(model="m1", content="r1", reasoning="m1 thinking"),
+            PanelResponse(model="m2", content="r2"),
+        ],
         synthesis="**hi**\n- x\n- y",
         master_context_used=128_000,
         per_fusion_max_tokens=1000,
         used_fallback=False,
+        master_reasoning="master thinking",
     )
 
 
@@ -41,14 +43,27 @@ def make_app(monkeypatch, tmp_path, run_impl, **cfgkw):
     return config, web.create_app(config)
 
 
-def test_index_sets_cookie(monkeypatch, tmp_path):
+def only_conv_id():
+    return next(iter(web.CONVERSATIONS))
+
+
+def test_index_creates_conversation(monkeypatch, tmp_path):
     _, app = make_app(monkeypatch, tmp_path, run_ok)
     client = TestClient(app)
     r = client.get("/")
     assert r.status_code == 200
     assert "fusionChat" in r.text
-    assert client.cookies.get("fc_session")
-    assert len(web.SESSIONS) == 1
+    assert "New chat" in r.text  # sidebar button + default title
+    assert len(web.CONVERSATIONS) == 1
+
+
+def test_index_reuses_recent(monkeypatch, tmp_path):
+    _, app = make_app(monkeypatch, tmp_path, run_ok)
+    client = TestClient(app)
+    client.get("/")
+    client.get("/")
+    client.get("/")
+    assert len(web.CONVERSATIONS) == 1  # no per-load leak
 
 
 def test_health_open(monkeypatch, tmp_path):
@@ -59,32 +74,61 @@ def test_health_open(monkeypatch, tmp_path):
     assert body["fusion_models"] == 2
 
 
-def test_chat_flow_and_history(monkeypatch, tmp_path):
+def test_new_chat_creates_separate_conversation(monkeypatch, tmp_path):
     _, app = make_app(monkeypatch, tmp_path, run_ok)
     client = TestClient(app)
     client.get("/")
-    sid = client.cookies.get("fc_session")
-    r = client.post(f"/chat/{sid}", data={"message": "hello"})
+    r = client.post("/new")
+    new_id = r.json()["id"]
+    assert new_id in web.CONVERSATIONS
+    assert len(web.CONVERSATIONS) == 2
+
+
+def test_chat_flow_sets_title_and_renders(monkeypatch, tmp_path):
+    _, app = make_app(monkeypatch, tmp_path, run_ok)
+    client = TestClient(app)
+    client.get("/")
+    cid = only_conv_id()
+    r = client.post(f"/chat/{cid}", data={"message": "hello world"})
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
+    assert data["title"] == "hello world"
     assert "<b>hi</b>" in data["html"]
-    assert "context 128000" in data["meta"]
-    # history is rendered server-side on reload (no per-load leak / no hidden context)
-    page = client.get("/").text
+    assert "Fusion panel" in data["html"]
+    assert "Master reasoning" in data["html"]
+    assert data["responses"][0]["reasoning"] == "m1 thinking"
+    assert web.CONVERSATIONS[cid].title == "hello world"
+    # reload renders the history and the sidebar title
+    page = client.get(f"/?c={cid}").text
     assert "<b>hi</b>" in page
+    assert "hello world" in page
 
 
-def test_session_reuse_no_leak(monkeypatch, tmp_path):
+def test_switch_between_conversations(monkeypatch, tmp_path):
     _, app = make_app(monkeypatch, tmp_path, run_ok)
     client = TestClient(app)
     client.get("/")
-    client.get("/")
-    client.get("/")
-    assert len(web.SESSIONS) == 1
+    id1 = only_conv_id()
+    id2 = client.post("/new").json()["id"]
+    page = client.get(f"/?c={id2}").text
+    # both chats appear in the sidebar; the requested one is active
+    assert f'href="/?c={id1}"' in page
+    assert f'class="conv active" href="/?c={id2}"' in page
 
 
-def test_unknown_session_404(monkeypatch, tmp_path):
+def test_delete_conversation(monkeypatch, tmp_path):
+    _, app = make_app(monkeypatch, tmp_path, run_ok)
+    client = TestClient(app)
+    client.get("/")
+    id1 = only_conv_id()
+    id2 = client.post("/new").json()["id"]
+    client.post(f"/delete/{id1}")
+    assert id1 not in web.CONVERSATIONS
+    assert id2 in web.CONVERSATIONS
+
+
+def test_unknown_conversation_404(monkeypatch, tmp_path):
     _, app = make_app(monkeypatch, tmp_path, run_ok)
     client = TestClient(app)
     r = client.post("/chat/deadbeef", data={"message": "hi"})
@@ -95,25 +139,12 @@ def test_error_path_returns_unescaped_html(monkeypatch, tmp_path):
     _, app = make_app(monkeypatch, tmp_path, run_fail)
     client = TestClient(app)
     client.get("/")
-    sid = client.cookies.get("fc_session")
-    data = client.post(f"/chat/{sid}", data={"message": "hi"}).json()
+    cid = only_conv_id()
+    data = client.post(f"/chat/{cid}", data={"message": "hi"}).json()
     assert data["ok"] is False
     assert data["html"].startswith("<div class='error'>")
     assert "&lt;div" not in data["html"]
-    # the exception text itself is still escaped
     assert "kaboom &lt;tag&gt;" in data["html"]
-
-
-def test_reset_clears_history(monkeypatch, tmp_path):
-    _, app = make_app(monkeypatch, tmp_path, run_ok)
-    client = TestClient(app)
-    client.get("/")
-    sid = client.cookies.get("fc_session")
-    client.post(f"/chat/{sid}", data={"message": "hi"})
-    assert web.SESSIONS[sid].history
-    client.post(f"/reset/{sid}")
-    assert web.SESSIONS[sid].history == []
-    assert "Start the conversation" in client.get("/").text
 
 
 def test_auth_required_when_password_set(monkeypatch, tmp_path):
@@ -122,29 +153,40 @@ def test_auth_required_when_password_set(monkeypatch, tmp_path):
     assert client.get("/").status_code == 401
     assert client.get("/", auth=("u", "wrong")).status_code == 401
     assert client.get("/", auth=("u", "pw")).status_code == 200
-    # health endpoint stays open for monitoring
-    assert client.get("/health").status_code == 200
+    assert client.get("/health").status_code == 200  # health stays open
 
 
-def test_eviction_closes_oldest(monkeypatch, tmp_path):
+def test_persistence_round_trip(monkeypatch, tmp_path):
+    config, app = make_app(monkeypatch, tmp_path, run_ok)
+    client = TestClient(app)
+    client.get("/")
+    cid = only_conv_id()
+    client.post(f"/chat/{cid}", data={"message": "remember me"})
+    # Simulate a restart: drop in-memory state, reload from disk.
+    web.CONVERSATIONS.clear()
+    web.load_conversations(config)
+    assert cid in web.CONVERSATIONS
+    restored = web.CONVERSATIONS[cid]
+    assert restored.title == "remember me"
+    assert len(restored.messages) == 2  # user + assistant
+    assert any("<b>hi</b>" in b["html"] for b in restored.history if b["role"] == "assistant")
+
+
+def test_empty_chats_not_persisted(monkeypatch, tmp_path):
+    config, app = make_app(monkeypatch, tmp_path, run_ok)
+    client = TestClient(app)
+    client.get("/")  # creates an empty conversation, never messaged
+    web.CONVERSATIONS.clear()
+    web.load_conversations(config)
+    assert len(web.CONVERSATIONS) == 0  # empty chats aren't saved
+
+
+def test_eviction_caps_conversations(monkeypatch, tmp_path):
     config, _ = make_app(monkeypatch, tmp_path, run_ok)
-    monkeypatch.setattr(web, "MAX_SESSIONS", 2)
-    sessions = [web.WebSession(config) for _ in range(3)]
-    for s in sessions:
-        web.SESSIONS[s.session_id] = s
-    asyncio.run(web._evict())
-    assert len(web.SESSIONS) == 2
-    assert sessions[0].session_id not in web.SESSIONS
-
-
-def test_ttl_eviction(monkeypatch, tmp_path):
-    config, _ = make_app(monkeypatch, tmp_path, run_ok)
-    monkeypatch.setattr(web, "SESSION_TTL_SECONDS", 1)
-    s = web.WebSession(config)
-    web.SESSIONS[s.session_id] = s
-    s.last_access -= 10  # pretend it is old
-    asyncio.run(web._evict())
-    assert s.session_id not in web.SESSIONS
+    monkeypatch.setattr(web, "MAX_CONVERSATIONS", 2)
+    for _ in range(3):
+        web._new_conversation(config)
+    assert len(web.CONVERSATIONS) <= 2
 
 
 # --- markdown renderer ---
@@ -153,6 +195,18 @@ def test_markdown_lists():
     out = web._markdown_to_html("- a\n- b")
     assert out.count("<li>") == 2
     assert "<ul>" in out and "</ul>" in out
+
+
+def test_markdown_ordered_list():
+    out = web._markdown_to_html("1. first\n2. second")
+    assert out.count("<li>") == 2
+    assert "<ol>" in out and "</ol>" in out
+
+
+def test_markdown_blank_lines_no_br():
+    out = web._markdown_to_html("para one\n\npara two")
+    assert "<br>" not in out
+    assert out.count("<p>") == 2
 
 
 def test_markdown_code_block():
