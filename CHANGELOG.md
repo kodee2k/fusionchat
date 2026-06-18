@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-18
+
+### Added
+- `--api` mode: an OpenAI-compatible server exposing the whole fusion pipeline as a
+  single model (`fusion`) for use in harnesses and SDKs. Endpoints: `POST
+  /v1/chat/completions` (streaming via `"stream": true`), `GET /v1/models`, `GET
+  /health`. Optional bearer-token auth via `web_password`; per-request sampling params
+  are ignored in favor of the fusion token budget.
+
+### Changed
+- Orchestrator refactored to share a `prepare()` step (panel + budget) between the
+  non-streaming `run()` and the streaming API path; `run()` behavior is unchanged.
+
 ## [0.2.0] - 2026-06-18
 
 ### Added

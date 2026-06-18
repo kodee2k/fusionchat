@@ -6,6 +6,7 @@ import dataclasses
 import sys
 from pathlib import Path
 
+from fusionchat.api import run_api
 from fusionchat.config import config_template, load_config
 from fusionchat.tui import run_tui
 from fusionchat.web import run_web
@@ -25,8 +26,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", "-c", type=Path, help="Path to fusionchat.yml config file")
     parser.add_argument("--web", action="store_true", help="Run the web chat interface")
-    parser.add_argument("--hostname", "-H", default="127.0.0.1", help="Web hostname (default 127.0.0.1)")
-    parser.add_argument("--port", "-p", type=int, default=8000, help="Web port (default 8000)")
+    parser.add_argument(
+        "--api",
+        action="store_true",
+        help="Run an OpenAI-compatible API endpoint (/v1/chat/completions) for harnesses",
+    )
+    parser.add_argument("--hostname", "-H", default="127.0.0.1", help="Server hostname (default 127.0.0.1)")
+    parser.add_argument("--port", "-p", type=int, default=8000, help="Server port (default 8000)")
     parser.add_argument("--effort", "-e", choices=["low", "mid", "high"], help="Override effort level")
     parser.add_argument(
         "--no-log-prompts",
@@ -59,15 +65,18 @@ def main(argv: list[str] | None = None) -> int:
     if overrides:
         config = dataclasses.replace(config, **overrides)  # type: ignore[arg-type]
 
-    if args.web and config.web_password is None and args.hostname not in ("127.0.0.1", "localhost", "::1"):
+    if (args.web or args.api) and config.web_password is None and args.hostname not in ("127.0.0.1", "localhost", "::1"):
+        surface = "API" if args.api else "web UI"
         print(
-            f"Warning: serving the web UI on {args.hostname} without 'web_password' set — "
+            f"Warning: serving the {surface} on {args.hostname} without 'web_password' set — "
             "anyone who can reach this host can use your API keys.",
             file=sys.stderr,
         )
 
     try:
-        if args.web:
+        if args.api:
+            run_api(config, args.hostname, args.port)
+        elif args.web:
             run_web(config, args.hostname, args.port)
         else:
             run_tui(config)

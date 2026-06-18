@@ -98,6 +98,17 @@ class FusionResult:
     master_reasoning: str | None = None
 
 
+@dataclass
+class FusionPrep:
+    """Everything needed to run the master synthesis after the panel returns."""
+    panel: list[PanelResponse]
+    prompt_text: str
+    synth_max: int
+    master_context: int
+    per_fusion_budget: int
+    used_fallback: bool
+
+
 class FusionOrchestrator:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -127,7 +138,8 @@ class FusionOrchestrator:
         except APIError as exc:
             return PanelResponse(model=client.cfg.model, content=f"[Error from {client.cfg.model}: {exc}]", ok=False)
 
-    async def run(self, messages: list[ChatMessage]) -> FusionResult:
+    async def prepare(self, messages: list[ChatMessage]) -> FusionPrep:
+        """Run the fusion panel and build the master's synthesis prompt + budget."""
         master_ctx, per_fusion_budget = await self._fusion_budget()
         fusion_prompt_text = fusion_prompt(messages)
 
@@ -163,18 +175,28 @@ class FusionOrchestrator:
             prompt_text = direct_prompt(messages)
             used_fallback = True
 
-        synthesis = await self.master_client.chat_full(
-            [ChatMessage(role="user", content=prompt_text)],
-            max_tokens=synth_max,
-            temperature=self.config.master.temperature,
+        return FusionPrep(
+            panel=panel,
+            prompt_text=prompt_text,
+            synth_max=synth_max,
+            master_context=master_ctx,
+            per_fusion_budget=per_fusion_budget,
+            used_fallback=used_fallback,
         )
 
+    async def run(self, messages: list[ChatMessage]) -> FusionResult:
+        prep = await self.prepare(messages)
+        synthesis = await self.master_client.chat_full(
+            [ChatMessage(role="user", content=prep.prompt_text)],
+            max_tokens=prep.synth_max,
+            temperature=self.config.master.temperature,
+        )
         return FusionResult(
-            responses=panel,
+            responses=prep.panel,
             synthesis=synthesis.content,
-            master_context_used=master_ctx,
-            per_fusion_max_tokens=per_fusion_budget,
-            used_fallback=used_fallback,
+            master_context_used=prep.master_context,
+            per_fusion_max_tokens=prep.per_fusion_budget,
+            used_fallback=prep.used_fallback,
             master_reasoning=synthesis.reasoning,
         )
 

@@ -74,10 +74,35 @@ Each model block accepts its own settings:
 ```bash
 fusionchat                        # TUI mode
 fusionchat --web                  # web chat on http://127.0.0.1:8000
+fusionchat --api                  # OpenAI-compatible API on http://127.0.0.1:8000
 fusionchat --web -H 0.0.0.0 -p 3000
 fusionchat -c /path/to/config.yml --effort high
 fusionchat --no-log-prompts       # log metadata only, not prompt/response text
 ```
+
+### OpenAI-compatible API (`--api`)
+
+`fusionchat --api` serves the whole fusion pipeline as a single OpenAI-compatible
+"model", so any harness or SDK that speaks the OpenAI API can use it. Point your client
+at it:
+
+```text
+base_url:  http://127.0.0.1:8000/v1
+model:     fusion
+api_key:   <web_password from config, or any string if web_password is unset>
+```
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "fusion", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+Endpoints: `POST /v1/chat/completions` (streaming via `"stream": true`), `GET /v1/models`,
+`GET /health`. Each call runs master + panel + synthesis and returns the synthesized
+answer. Per-request sampling params (`max_tokens`, `temperature`, …) are ignored — the
+fusion token budget is governed by config + effort. If `web_password` is set, send it as
+the bearer token (`Authorization: Bearer <web_password>`).
 
 In the TUI, press **Ctrl+N** for a new chat, **F1** for config info, **Ctrl+C** to quit.
 
